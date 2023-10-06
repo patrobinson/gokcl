@@ -1,8 +1,6 @@
 # Golang Kinesis Client Library (gokcl)
 
-A ground up re-write of [Gokini](https://github.com/patrobinson/gokini).
-
-Based on the [Amazon Kinesis Client Library](https://github.com/awslabs/amazon-kinesis-client).
+A ground up re-write of [Gokini](https://github.com/patrobinson/gokini), based on the [Amazon Kinesis Client Library](https://github.com/awslabs/amazon-kinesis-client).
 
 ## Project Goals
 

@@ -8,6 +8,7 @@ But this creates challenges and opportunities for bugs.
 
 ## Invariants
 
+* Assumption: Eventually nodes start and stay up long enough to process all shard records
 * Safety invariant: A node should not write a checkpoint that is less than the current checkpoint
 * Safety invariant: A node should never skip processing a record
 * Temporal invariant: Each record is eventually processed at least once
@@ -18,4 +19,4 @@ But this creates challenges and opportunities for bugs.
 We want our system to gracefully handle the following failure modes:
 
 * Nodes permenantly or temporarily failing
-* Nodes pausing and resuming computation
+* Nodes pausing and resuming computation (network partitioning or system lock up)

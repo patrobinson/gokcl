@@ -90,6 +90,6 @@ Next == (\E n \in Node: Subscriber(n))
 
 Spec == Init /\ [][Next]_vars
 
-Allocated == \A s \in Shard: []<>(<<Allocation[s] # NoNode>>_vars)
+AllRecordsProcessed == \A s \in Shard: \A n \in Node: []<>(~ENABLED Publisher /\ ~ENABLED Subscriber(n) => ShardIterator[s] = NodeIterator[s])
 
 ====

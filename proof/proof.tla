@@ -13,7 +13,7 @@ ASSUME
     /\ Shard # {}
     /\ NumberRecordsWritten > 0
 
-VARIABLES Allocation, ShardIterator, NodeIterator
+VARIABLES Allocation, ShardIterator, NodeIterator, SubscriberState
 
 \* These are a special kind of value, like NULL
 NoNode == CHOOSE n : n \notin Node
@@ -25,39 +25,35 @@ InitialIterator == 0
 \* Nat is the set of all natural numbers (infinite)
 Iterator == [Shard -> Nat]
 \* Node ∪ {NoNode} produces a set with all nodes and our "Null" value
-ShardAllocation == [Shard -> Node \union {NoNode}]
+ShardAllocation == [Shard -> [node: Node \union {NoNode}, lastUpdated: Nat]]
+NodeState == [Node -> [ticks: Nat]]
 
-vars == << Allocation, ShardIterator, NodeIterator >>
+vars == << Allocation, ShardIterator, NodeIterator, SubscriberState >>
 
 TypeInvariant ==
   /\ Allocation \in ShardAllocation
   /\ ShardIterator \in Iterator
   /\ NodeIterator \in Iterator
+  /\ SubscriberState \in NodeState
 
 \* Returns true if all some shards are not allocated (allocated to NoNode)
-AllShardsNotAllocated == Allocation \notin [Shard -> Node]
+UnallocatedShards == {s \in Shard: Allocation[s].node = NoNode}
+AllShardsNotAllocated == UnallocatedShards # {}
 
 \* Returns a set of shards allocated to the node that have records to process
 NodeShards(n) ==
     {
         s \in Shard:
-            (Allocation[s] = n /\ NodeIterator[s] # ShardIterator[s])
+            (Allocation[s].node = n /\ NodeIterator[s] # ShardIterator[s])
     }
 
-AllocateFreeShard(w) ==
+AllocateFreeShard(n) ==
     LET
-        shard == CHOOSE s \in Shard: TRUE
+        shard == CHOOSE s \in UnallocatedShards: TRUE
     IN
-        /\ AllShardsNotAllocated
-        /\ IF Allocation[shard] = NoNode
-            THEN Allocation' = [Allocation EXCEPT ![shard] = w]
-            ELSE UNCHANGED << Allocation >>
-        /\  UNCHANGED << NodeIterator, ShardIterator >>
-
-PutRecord(s) ==
-    /\ ShardIterator[s] < NumberRecordsWritten
-    /\ ShardIterator' = [ShardIterator EXCEPT ![s] = @ + 1]
-    /\ UNCHANGED << NodeIterator, Allocation >>
+        /\ Allocation[shard].node = NoNode
+        /\ Allocation' = [Allocation EXCEPT ![shard] = [node |-> n, lastUpdated |-> SubscriberState[n].ticks]]
+        /\ UNCHANGED << NodeIterator, ShardIterator >>
 
 GetRecord(n) ==
     LET
@@ -65,31 +61,35 @@ GetRecord(n) ==
     IN
         /\ NodeIterator[shard] # ShardIterator[shard]
         /\ NodeIterator' = [NodeIterator EXCEPT ![shard] = @ + 1]
-        /\ UNCHANGED << ShardIterator, Allocation >>
+        /\ Allocation' = [Allocation EXCEPT ![shard].lastUpdated = SubscriberState[n].ticks]
+        /\ UNCHANGED << ShardIterator >>
 
 Subscriber(n) ==
     \/
         /\ AllShardsNotAllocated
         /\ AllocateFreeShard(n)
+        /\ SubscriberState' = [SubscriberState EXCEPT ![n].ticks = @ + 1]
     \/
         /\ ShardIterator # NodeIterator
-        /\ NodeShards(n) # {} /\ GetRecord(n)
-
-Publisher == \E s \in Shard: PutRecord(s)
+        /\ NodeShards(n) # {}
+        /\ GetRecord(n)
+        /\ SubscriberState' = [SubscriberState EXCEPT ![n].ticks = @ + 1]
 
 \* Initialise variables
 Init ==
-        /\ Allocation = [ s \in Shard |-> NoNode ]
-        /\ ShardIterator = [ s \in Shard |-> InitialIterator ]
+        /\ Allocation = [ s \in Shard |-> [node |-> NoNode, lastUpdated |-> 0] ]
+        /\ ShardIterator = [ s \in Shard |-> NumberRecordsWritten ]
         /\ NodeIterator = [ s \in Shard |-> InitialIterator ]
+        /\ SubscriberState = [ n \in Node |-> [ticks |-> 0] ]
 
-\* Publish and process records
-\* We use one publisher but n nodes
-Next == (\E n \in Node: Subscriber(n))
-    \/ Publisher
+Next == \A n \in Node: Subscriber(n)
 
 Spec == Init /\ [][Next]_vars
 
-AllRecordsProcessed == \A s \in Shard: \A n \in Node: []<>(~ENABLED Publisher /\ ~ENABLED Subscriber(n) => ShardIterator[s] = NodeIterator[s])
+\* Once all publishers and subscribers are finished, all records should be processed
+AllRecordsProcessed == 
+    \A s \in Shard: 
+        \A n \in Node: 
+            []<>(~ENABLED Subscriber(n) => ShardIterator[s] = NodeIterator[s])
 
 ====

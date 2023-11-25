@@ -13,7 +13,7 @@ ASSUME
     /\ Shard # {}
     /\ NumberRecordsWritten > 0
 
-VARIABLES Allocation, ShardIterator, NodeIterator, SubscriberState
+VARIABLES Allocation, ShardIterator, NodeIterator, SubscriberState, WallClock
 
 \* These are a special kind of value, like NULL
 NoNode == CHOOSE n : n \notin Node
@@ -28,7 +28,7 @@ Iterator == [Shard -> Nat]
 ShardAllocation == [Shard -> [node: Node \union {NoNode}, lastUpdated: Nat]]
 NodeState == [Node -> [ticks: Nat]]
 
-vars == << Allocation, ShardIterator, NodeIterator, SubscriberState >>
+vars == << Allocation, ShardIterator, NodeIterator, SubscriberState, WallClock >>
 
 TypeInvariant ==
   /\ Allocation \in ShardAllocation
@@ -52,8 +52,10 @@ AllocateFreeShard(n) ==
         shard == CHOOSE s \in UnallocatedShards: TRUE
     IN
         /\ Allocation[shard].node = NoNode
-        /\ Allocation' = [Allocation EXCEPT ![shard] = [node |-> n, lastUpdated |-> SubscriberState[n].ticks]]
+        /\ Allocation' = [Allocation EXCEPT ![shard] = [node |-> n, lastUpdated |-> WallClock]]
         /\ UNCHANGED << NodeIterator, ShardIterator >>
+
+
 
 GetRecord(n) ==
     LET
@@ -61,19 +63,35 @@ GetRecord(n) ==
     IN
         /\ NodeIterator[shard] # ShardIterator[shard]
         /\ NodeIterator' = [NodeIterator EXCEPT ![shard] = @ + 1]
-        /\ Allocation' = [Allocation EXCEPT ![shard].lastUpdated = SubscriberState[n].ticks]
+        /\ Allocation' = [Allocation EXCEPT ![shard].lastUpdated = WallClock]
         /\ UNCHANGED << ShardIterator >>
 
 Subscriber(n) ==
-    \/
-        /\ AllShardsNotAllocated
+    IF AllShardsNotAllocated
+    THEN
         /\ AllocateFreeShard(n)
         /\ SubscriberState' = [SubscriberState EXCEPT ![n].ticks = @ + 1]
-    \/
-        /\ ShardIterator # NodeIterator
-        /\ NodeShards(n) # {}
-        /\ GetRecord(n)
-        /\ SubscriberState' = [SubscriberState EXCEPT ![n].ticks = @ + 1]
+    ELSE
+        IF ShardIterator = NodeIterator
+        THEN 
+            /\ TRUE
+            /\ UNCHANGED vars
+        ELSE
+            IF NodeShards(n) = {}
+            THEN
+                /\ SubscriberState' = [SubscriberState EXCEPT ![n].ticks = @ + 1]
+                /\ UNCHANGED << NodeIterator, ShardIterator, Allocation >>
+            ELSE
+                /\ GetRecord(n)
+                /\ SubscriberState' = [SubscriberState EXCEPT ![n].ticks = @ + 1]
+
+DeallocateTimedOutShards == 
+    \A s \in Shard: IF WallClock - Allocation[s].lastUpdated > 5
+    THEN
+        Allocation' = [Allocation EXCEPT ![s].node = NoNode, ![s].lastUpdated = WallClock]
+    ELSE
+        TRUE
+
 
 \* Initialise variables
 Init ==
@@ -81,15 +99,14 @@ Init ==
         /\ ShardIterator = [ s \in Shard |-> NumberRecordsWritten ]
         /\ NodeIterator = [ s \in Shard |-> InitialIterator ]
         /\ SubscriberState = [ n \in Node |-> [ticks |-> 0] ]
+        /\ WallClock = 0
 
-Next == \A n \in Node: Subscriber(n)
+Next == \E n \in Node: Subscriber(n) /\ DeallocateTimedOutShards /\ WallClock' = WallClock + 1
 
 Spec == Init /\ [][Next]_vars
 
 \* Once all publishers and subscribers are finished, all records should be processed
-AllRecordsProcessed == 
-    \A s \in Shard: 
-        \A n \in Node: 
-            []<>(~ENABLED Subscriber(n) => ShardIterator[s] = NodeIterator[s])
+AllRecordsProcessed ==
+    <>[](WallClock > 20 => ShardIterator = NodeIterator)
 
 ====
